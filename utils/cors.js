@@ -1,12 +1,12 @@
 const allowedOrigins = ['https://trysavoy.com', 'http://localhost:3000'];
 
 export function setCors(req, res) {
+    console.log('headers coming in is', req.headers.origin)
     const origin = req.headers.origin;
 
     // Check if the origin is in our allowed list
     if (allowedOrigins.includes(origin)) {
         res.setHeader('Access-Control-Allow-Origin', origin);
-        res.setHeader('Access-Control-Allow-Origin', 'https://www.trysavoy.com')
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
         res.setHeader('Access-Control-Allow-Credentials', 'true');
