@@ -1,4 +1,5 @@
-const allowedOrigins = ['https://trysavoy.com', 'http://localhost:3000'];
+const allowedOrigins = ['https://trysavoy.com', 'https://www.trysavoy.com', 'http://localhost:3000'];
+
 
 export function setCors(req, res) {
     console.log('headers coming in is', req.headers.origin)
