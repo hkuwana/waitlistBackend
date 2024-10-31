@@ -1,264 +1,405 @@
-# Webflow Waitlist Integration Guide
+# Complete Waitlist System Setup Guide
 
-A guide to adding a referral-based waitlist system to your Webflow site using code injection.
+A comprehensive guide for setting up a referral-based waitlist system with Vercel (backend), Supabase (database), and Webflow (frontend).
 
 ## Table of Contents
 
-- [Quick Start](#quick-start)
-- [Detailed Installation Steps](#detailed-installation-steps)
-- [Customization](#customization)
-- [Troubleshooting](#troubleshooting)
-- [FAQ](#faq)
+- [System Architecture](#system-architecture)
+- [Prerequisites](#prerequisites)
+- [Supabase Setup](#supabase-setup)
+- [Vercel Backend Setup](#vercel-backend-setup)
+- [Webflow Integration](#webflow-integration)
+- [Testing](#testing)
+- [Maintenance](#maintenance)
 
-## Quick Start
+## System Architecture
 
-1. Go to Webflow Project Settings → Custom Code
-2. Add the code to your site's `<head>` and `<body>` tags
-3. Publish your site
-
-## Detailed Installation Steps
-
-### 1. Add the Styles (Head Code)
-
-In Webflow:
-
-1. Go to Project Settings
-2. Click on "Custom Code"
-3. Add this code to the "Head Code":
-
-```html
-<style>
-  .waitlist-widget {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-      sans-serif;
-    max-width: 600px;
-    margin: 0 auto;
-    color: #f8f8f8;
-    padding: 24px;
-  }
-
-  .input-group {
-    display: flex;
-    gap: 12px;
-    margin-top: 24px;
-    background: rgba(167, 139, 250, 0.1);
-    padding: 24px;
-    border-radius: 12px;
-    border: 1px solid rgba(167, 139, 250, 0.2);
-  }
-
-  input[type="email"] {
-    flex: 1;
-    background: rgba(255, 255, 255, 0.1);
-    border: 2px solid rgba(167, 139, 250, 0.3);
-    color: #f8f8f8;
-    padding: 14px 20px;
-    border-radius: 8px;
-    width: 100%;
-    font-size: 16px;
-    transition: all 0.2s ease;
-  }
-
-  .referral-link {
-    color: #a78bfa;
-    cursor: pointer;
-    text-decoration: underline;
-    word-break: break-all;
-    transition: color 0.2s ease;
-  }
-
-  .copy-feedback {
-    display: inline-block;
-    font-size: 14px;
-    color: #a78bfa;
-    margin-left: 8px;
-    opacity: 0;
-    transition: opacity 0.2s ease;
-  }
-
-  .copy-feedback.show {
-    opacity: 1;
-  }
-
-  /* Add the rest of your CSS styles here */
-</style>
+```mermaid
+graph LR
+    A[Webflow Frontend] -->|API Calls| B[Vercel Backend]
+    B -->|Data Storage| C[Supabase Database]
+    B -->|Email Service| D[SendGrid/Email Provider]
 ```
 
-### 2. Add the HTML and JavaScript (Body Code)
+## Prerequisites
 
-Add this code to the "Before </body> tag" section:
+1. Accounts needed:
+   - [Vercel Account](https://vercel.com/signup)
+   - [Supabase Account](https://app.supabase.com/sign-up)
+   - [GitHub Account](https://github.com/signup)
+   - Webflow Account (for frontend)
 
-```html
-<!-- Waitlist Widget HTML -->
-<div class="waitlist-widget">
-  <div class="pre-signup">
-    <div class="input-group">
-      <input type="email" placeholder="Enter your email" id="email-input" />
-      <button class="join-button" onclick="handleWaitlistJoin()">
-        Join Waitlist
-        <div class="spinner"></div>
-      </button>
-    </div>
-    <div class="error-message" id="error-message"></div>
-  </div>
-  <div class="post-signup" style="display: none;">
-    <div class="referral-box"></div>
-  </div>
-</div>
+2. Tools to install:
+   - [Node.js](https://nodejs.org/) (v14 or higher)
+   - [Git](https://git-scm.com/downloads)
+   - [Vercel CLI](https://vercel.com/cli): `npm i -g vercel`
+   - [Supabase CLI](https://supabase.com/docs/guides/cli): `npm i -g supabase`
 
-<script>
-  // Configuration
-  const API_BASE = "https://waitlist-backend-six.vercel.app/api";
-  let isSubmitting = false;
+## Supabase Setup
 
-  async function handleWaitlistJoin() {
-    const emailInput = document.getElementById("email-input");
-    const joinButton = document.querySelector(".join-button");
-    const spinner = document.querySelector(".spinner");
-    const errorMessage = document.getElementById("error-message");
+### 1. Create Database
 
-    // Reset states
-    errorMessage.style.display = "none";
+1. Log into [Supabase Dashboard](https://app.supabase.com)
+2. Click "New Project"
+3. Enter project details:
+   - Name: `waitlist-db` (or your preferred name)
+   - Database Password: Generate a strong password
+   - Region: Choose closest to your users
+4. Click "Create Project"
 
-    // Basic email validation
-    const email = emailInput.value.trim();
-    if (!email || !email.includes("@")) {
-      showError("Please enter a valid email address");
-      return;
+### 2. Create Tables
+
+Run these SQL commands in the Supabase SQL editor:
+
+```sql
+-- Create waitlist table
+CREATE TABLE waitlist (
+    id BIGSERIAL PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    referral_code TEXT UNIQUE NOT NULL,
+    referred_by TEXT REFERENCES waitlist(referral_code),
+    position INTEGER NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW()),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc', NOW())
+);
+
+-- Create referral counts view
+CREATE VIEW referral_counts AS
+SELECT 
+    referral_code,
+    COUNT(referred_by) as referral_count
+FROM waitlist
+WHERE referred_by IS NOT NULL
+GROUP BY referral_code;
+
+-- Create function to update timestamps
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = TIMEZONE('utc', NOW());
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Create trigger for timestamp updates
+CREATE TRIGGER update_waitlist_updated_at
+    BEFORE UPDATE ON waitlist
+    FOR EACH ROW
+    EXECUTE PROCEDURE update_updated_at_column();
+```
+
+### 3. Set up Policies
+
+Add these Row Level Security (RLS) policies:
+
+```sql
+-- Enable RLS
+ALTER TABLE waitlist ENABLE ROW LEVEL SECURITY;
+
+-- Allow inserts from authenticated service role only
+CREATE POLICY "Enable insert for service role only" 
+ON waitlist FOR INSERT 
+TO authenticated 
+WITH CHECK (true);
+
+-- Allow reads for position and referral data
+CREATE POLICY "Enable read access for all users"
+ON waitlist FOR SELECT
+USING (true);
+```
+
+### 4. Get Connection Details
+
+1. Go to Project Settings → Database
+2. Save these values for later:
+   - Connection string
+   - Project URL
+   - API Key (anon public)
+   - JWT Secret
+
+## Vercel Backend Setup
+
+### 1. Create Project Structure
+
+```bash
+mkdir waitlist-backend
+cd waitlist-backend
+npm init -y
+
+# Install dependencies
+npm install @supabase/supabase-js cors express nanoid dotenv
+npm install --save-dev @types/node @types/express
+```
+
+### 2. Create Project Files
+
+Create a new file `.env`:
+
+```env
+SUPABASE_URL=your_supabase_project_url
+SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+ALLOWED_ORIGINS=https://your-webflow-site.com
+```
+
+Create `api/index.js`:
+
+```javascript
+const express = require('express');
+const cors = require('cors');
+const { createClient } = require('@supabase/supabase-js');
+const { nanoid } = require('nanoid');
+require('dotenv').config();
+
+const app = express();
+
+// Configure Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+// Configure CORS
+const corsOptions = {
+  origin: process.env.ALLOWED_ORIGINS.split(','),
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type'],
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.use(express.json());
+
+// Join waitlist endpoint
+app.post('/api/join', async (req, res) => {
+  try {
+    const { email, referralCode } = req.body;
+
+    // Validate email
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ error: 'Invalid email address' });
     }
 
-    if (isSubmitting) return;
+    // Check if email already exists
+    const { data: existingUser } = await supabase
+      .from('waitlist')
+      .select('id')
+      .eq('email', email)
+      .single();
 
-    // Show loading state
-    isSubmitting = true;
-    joinButton.disabled = true;
-    spinner.style.display = "block";
+    if (existingUser) {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
 
-    try {
-      const referralCode = new URLSearchParams(window.location.search).get(
-        "ref"
-      );
+    // Get current position count
+    const { data: positionData } = await supabase
+      .from('waitlist')
+      .select('position')
+      .order('position', { ascending: false })
+      .limit(1);
 
-      const response = await fetch(`${API_BASE}/join`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+    const nextPosition = positionData?.[0]?.position ? positionData[0].position + 1 : 1;
+
+    // Generate unique referral code
+    const newReferralCode = nanoid(10);
+
+    // Create new waitlist entry
+    const { data: newUser, error } = await supabase
+      .from('waitlist')
+      .insert([
+        {
           email,
-          referralCode,
-        }),
-      });
+          referral_code: newReferralCode,
+          referred_by: referralCode || null,
+          position: nextPosition,
+        },
+      ])
+      .single();
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to join waitlist");
-      }
-
-      showPostSignup({
-        position: data.position,
-        referralCode: data.referralCode,
-      });
-    } catch (error) {
-      console.error("Error joining waitlist:", error);
-      showNetworkError();
-    } finally {
-      isSubmitting = false;
-      joinButton.disabled = false;
-      spinner.style.display = "none";
+    if (error) {
+      console.error('Database error:', error);
+      return res.status(500).json({ error: 'Failed to join waitlist' });
     }
-  }
 
-  function showPostSignup(data) {
-    const referralBox = document.querySelector(".referral-box");
-    referralBox.innerHTML = `
-      <div>You are <span class="position-number">#${data.position}</span> in line!</div>
-      <div>Refer people to move up:</div>
-      <div>
-        <span class="referral-link" onclick="copyReferralLink(this)">${window.location.origin}?ref=${data.referralCode}</span>
-        <span class="copy-feedback">Copied!</span>
-      </div>
-    `;
-    document.querySelector(".pre-signup").style.display = "none";
-    document.querySelector(".post-signup").style.display = "block";
-  }
-
-  async function copyReferralLink(element) {
-    const referralLink = element.textContent;
-    try {
-      await navigator.clipboard.writeText(referralLink);
-      const feedback = element.nextElementSibling;
-      feedback.classList.add("show");
-      setTimeout(() => {
-        feedback.classList.remove("show");
-      }, 2000);
-    } catch (err) {
-      console.error("Failed to copy:", err);
+    // Update referrer's position if applicable
+    if (referralCode) {
+      await updateReferrerPosition(referralCode);
     }
+
+    return res.json({
+      position: nextPosition,
+      referralCode: newReferralCode,
+    });
+  } catch (error) {
+    console.error('Server error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
-</script>
+});
+
+async function updateReferrerPosition(referralCode) {
+  // Get referrer's current position and referral count
+  const { data: referrer } = await supabase
+    .from('waitlist')
+    .select('position, referral_code')
+    .eq('referral_code', referralCode)
+    .single();
+
+  if (!referrer) return;
+
+  // Get count of referrals
+  const { data: referralCount } = await supabase
+    .from('referral_counts')
+    .select('referral_count')
+    .eq('referral_code', referralCode)
+    .single();
+
+  // Calculate new position based on referrals
+  const newPosition = Math.max(1, referrer.position - referralCount.referral_count);
+
+  // Update referrer's position
+  await supabase
+    .from('waitlist')
+    .update({ position: newPosition })
+    .eq('referral_code', referralCode);
+}
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'healthy' });
+});
+
+module.exports = app;
 ```
 
-## Customization
+Create `vercel.json`:
 
-### Changing Colors
+```json
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/index.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "api/index.js"
+    }
+  ]
+}
+```
 
-1. Find the color values in the CSS (e.g., `#A78BFA`)
-2. Replace with your brand colors
-3. Update hover states accordingly
+### 3. Deploy to Vercel
 
-### Modifying Text
+1. Push code to GitHub:
 
-- Edit the text directly in the HTML
-- Update error messages in the JavaScript functions
+```bash
+git init
+git add .
+git commit -m "Initial commit"
+git remote add origin your-github-repo-url
+git push -u origin main
+```
 
-### Styling Tips
+2. Deploy with Vercel:
+   - Go to [Vercel Dashboard](https://vercel.com/dashboard)
+   - Click "New Project"
+   - Import your GitHub repository
+   - Add Environment Variables from `.env`
+   - Click "Deploy"
 
-- Use Webflow's style editor for basic changes
-- Use custom CSS for more advanced modifications
-- Keep the widget's max-width (600px) for optimal display
+3. Configure Domain (optional):
+   - Go to Project Settings → Domains
+   - Add your custom domain
+   - Update DNS records as instructed
+
+## Webflow Integration
+
+[Previous Webflow integration instructions here...]
+
+## Testing
+
+### 1. Test Database Connection
+
+```bash
+# Using curl
+curl -X GET https://your-vercel-url/api/health
+```
+
+### 2. Test Waitlist Signup
+
+```bash
+# Test signup
+curl -X POST https://your-vercel-url/api/join \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com"}'
+```
+
+### 3. Test Referral Flow
+
+1. Sign up first user
+2. Copy referral code
+3. Sign up second user with referral code
+4. Verify position updates
+
+## Maintenance
+
+### Regular Tasks
+
+1. Monitor Supabase usage/quotas
+2. Check Vercel deployment logs
+3. Update dependencies monthly
+4. Backup database weekly
+
+### Monitoring
+
+1. Set up Vercel alerts for:
+   - Deploy failures
+   - High error rates
+   - Performance issues
+
+2. Monitor Supabase for:
+   - Database size
+   - Query performance
+   - Connection limits
+
+### Scaling Considerations
+
+1. Add caching for position calculations
+2. Implement rate limiting
+3. Add queue system for high traffic
+4. Set up read replicas if needed
 
 ## Troubleshooting
 
 ### Common Issues
 
 1. **CORS Errors**
+   - Verify ALLOWED_ORIGINS in .env
+   - Check Vercel deployment logs
+   - Ensure proper headers in requests
 
-```javascript
-// Add this to your backend API
-res.setHeader("Access-Control-Allow-Origin", "https://your-webflow-site.com");
-```
+2. **Database Connection Issues**
+   - Verify Supabase credentials
+   - Check IP allow-list
+   - Monitor connection pools
 
-2. **Widget Not Showing**
+3. **Position Calculation Issues**
+   - Check referral_counts view
+   - Verify trigger functions
+   - Monitor transaction logs
 
-- Ensure the HTML is placed where you want the widget to appear
-- Check console for JavaScript errors
-- Verify custom code is published
+For additional support:
 
-3. **Styling Conflicts**
+- Supabase Discord: [Link]
+- Vercel Support: [Link]
+- Project Issues: [GitHub Issues Link]
 
-- Add more specific CSS selectors
-- Use `!important` for critical styles if needed
+Would you like me to:
 
-### Error Messages
-
-- Network errors show retry button
-- Invalid emails show validation message
-- Server errors display with explanation
-
-## FAQ
-
-**Q: Where should I place the widget in my Webflow design?**
-A: Create a container element where you want the widget to appear and ensure it has sufficient padding/margin.
-
-**Q: How do I change the API endpoint?**
-A: Update the `API_BASE` constant in the JavaScript code.
-
-**Q: Can I modify the referral link format?**
-A: Yes, edit the `showPostSignup` function to change the link structure.
-
-**Q: How do I test the waitlist?**
-A: Use different email addresses and referral codes to verify functionality.
-
-For additional support or customization needs, contact your development team or refer to the Webflow documentation.
+1. Add more detailed monitoring setup
+2. Include additional deployment configurations
+3. Add automated testing examples
+4. Include backup and recovery procedures?
